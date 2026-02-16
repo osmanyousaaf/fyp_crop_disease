@@ -5,3 +5,12 @@ ENV/
 __pycache__/
 *.pyc
 .env
+
+frontCrops/eas.json
+frontCrops/node_modules
+frontCrops/.env
+
+backend/.env
+backend/venv
+backend/__pycache__
+backend/instance
