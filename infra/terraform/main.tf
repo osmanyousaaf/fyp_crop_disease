@@ -113,7 +113,13 @@ resource "aws_instance" "app" {
 
   user_data = <<-EOT
     #!/bin/bash
-    set -euxo pipefail
+    # Install SSM agent first so Session Manager works even if later steps fail (Educate / slow dnf).
+    set -uxo pipefail
+    dnf install -y amazon-ssm-agent
+    systemctl enable amazon-ssm-agent
+    systemctl start amazon-ssm-agent
+
+    set +e
     dnf update -y
     dnf install -y docker git
     systemctl enable docker

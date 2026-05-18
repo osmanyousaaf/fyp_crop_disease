@@ -91,4 +91,4 @@ The script writes `frontCrops/.env.local`, runs `expo prebuild`, and **`assemble
 
 ## Troubleshooting
 
-- **`t3.micro` Unsupported in `us-east-1e`**: The default VPC may place the instance in AZ **`us-east-1e`**, where some burstable types are unavailable. Terraform now **skips `us-east-1e`** when auto-selecting a subnet. You can also set **`subnet_id`** in `terraform.tfvars` to a subnet in **`us-east-1a`–`us-east-1f`** (from EC2 → Subnets).
+- **`TargetNotConnected` (SSM)**: The instance can still pass EC2 status checks while the **SSM agent** isn’t running / didn’t install because **`dnf update`** exited early (`set -e`). Latest Terraform **starts `amazon-ssm-agent` first** in user-data. For an **already-created** instance, fix via SSH (**Instance Connect** or `key_name`) and run `sudo systemctl enable --now amazon-ssm-agent`, or **`terraform apply -replace=aws_instance.app`** to rerun bootstrap.
