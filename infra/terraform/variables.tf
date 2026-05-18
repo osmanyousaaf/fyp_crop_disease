@@ -36,7 +36,7 @@ variable "api_allowed_cidrs" {
 
 variable "key_name" {
   type        = string
-  description = "Existing EC2 Key Pair name in this region (optional if you only use SSM)."
+  description = "EC2 Key Pair name in this region (**strongly recommended**). Without it, SSH relies on EC2 Instance Connect, which fails on minimal AMIs and is awkward on Educate accounts."
   default     = ""
 }
 

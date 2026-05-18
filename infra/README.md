@@ -91,4 +91,4 @@ The script writes `frontCrops/.env.local`, runs `expo prebuild`, and **`assemble
 
 ## Troubleshooting
 
-- **`TargetNotConnected` (SSM)**: The instance can still pass EC2 status checks while the **SSM agent** isn’t running / didn’t install because **`dnf update`** exited early (`set -e`). Latest Terraform **starts `amazon-ssm-agent` first** in user-data. For an **already-created** instance, fix via SSH (**Instance Connect** or `key_name`) and run `sudo systemctl enable --now amazon-ssm-agent`, or **`terraform apply -replace=aws_instance.app`** to rerun bootstrap.
+- **`Permission denied` after EC2 Instance Connect `Success: true`**: The AMI was likely **Amazon Linux 2023 Minimal**, which often **does not install the Instance Connect helper**. Terraform now prefers **non-minimal** AMIs (`al2023-ami-20*-…`). **Best fix:** create an EC2 **key pair**, set **`key_name`** in `terraform.tfvars`, then **`terraform apply -replace=aws_instance.app`** and use **`ssh -i your.pem ec2-user@<elastic_ip>`**.

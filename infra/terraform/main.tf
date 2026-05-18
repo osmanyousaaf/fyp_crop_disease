@@ -21,9 +21,11 @@ data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
 
+  # Exclude **minimal** AMIs (`al2023-ami-minimal-*`): they often lack the EC2 Instance Connect
+  # helper, so `send-ssh-public-key` succeeds but SSH still gets "Permission denied".
   filter {
     name   = "name"
-    values = ["al2023-ami-*-kernel-*-x86_64"]
+    values = ["al2023-ami-20*-kernel-*-x86_64"]
   }
 }
 
