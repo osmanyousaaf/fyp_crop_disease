@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { STORAGE_KEY_SECTOR } from '@/constants/sectors';
 
 interface User {
     id: string;
@@ -65,6 +66,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         SecureStore.deleteItemAsync('userToken');
         await AsyncStorage.removeItem('userData');
         await AsyncStorage.removeItem('isGuest');
+        await AsyncStorage.removeItem(STORAGE_KEY_SECTOR);
     };
 
     const continueAsGuest = () => {

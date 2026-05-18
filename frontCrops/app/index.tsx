@@ -1,267 +1,1176 @@
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+
 import axios from 'axios';
+
 import { useRouter } from 'expo-router';
-import { Eye, EyeClosed } from 'lucide-react-native';
-import React, { useEffect, useState } from 'react';
+
+import { Eye, EyeOff } from 'lucide-react-native';
+
+import React, { useEffect, useMemo, useState } from 'react';
+
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
 import {
-  Alert,
+
+  ActivityIndicator,
+
   Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+
+  StyleSheet,
+
   Text,
+
   TextInput,
+
   TouchableOpacity,
+
   View,
+
 } from 'react-native';
+
+import { AuthChrome } from '../components/AuthChrome';
+
 import { useAuth } from '../context/AuthContext';
 
+import { COLORS } from '../constants/theme';
+
+import { getApiErrorMessage } from '../utils/apiError';
+
+
+
+const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
+
+
 const Index = () => {
+
   const router = useRouter();
+
   const { login, continueAsGuest, token, isGuest } = useAuth();
 
-  // Form states
+
+
   const [email, setEmail] = useState('');
+
   const [password, setPassword] = useState('');
+
   const [fullName, setFullName] = useState('');
+
   const [isLogin, setIsLogin] = useState(true);
+
   const [showPassword, setShowPassword] = useState(false);
 
+  const [loading, setLoading] = useState(false);
 
-  // Navigate if already logged in or guest
+  const [banner, setBanner] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+
+  const [fieldErrors, setFieldErrors] = useState<{
+
+    email?: string;
+
+    password?: string;
+
+    name?: string;
+
+  }>({});
+
+
+
   useEffect(() => {
+
     if (token || isGuest) {
+
       router.replace('/startScaningProcess');
+
     }
+
   }, [token, isGuest]);
 
-  // Configure Google Sign-In
+
+
   useEffect(() => {
+
     GoogleSignin.configure({
+
       webClientId: process.env.EXPO_PUBLIC_WEB_CLIENT_ID,
+
       offlineAccess: true,
-      // forceCodeForRefreshToken: true,
+
     });
+
   }, []);
 
 
-  // Normal email/password login or signup
-  const handleContinue = async () => {
-    if (isLogin) {
-      if (!email || !password) return Alert.alert('Error', 'Please fill all fields');
 
-      try {
-        const res = await axios.post(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/login`, {
-          email,
-          password,
-        });
-        await login(res.data.access_token, { id: 'some-id', email }); // Backend should return user info
-        router.replace('/startScaningProcess');
-      } catch (err: any) {
-        Alert.alert('Login Failed', err.response?.data?.message || 'Invalid credentials');
-      }
-    } else {
-      if (!fullName || !email || !password) return Alert.alert('Error', 'Please fill all fields');
+  const clearBanner = () => setBanner(null);
 
-      try {
-        await axios.post(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/signup`, {
-          name: fullName,
-          email,
-          password,
-        });
-        Alert.alert('Success', 'Check your email for the verification code.');
-        setIsLogin(true); // Switch to login after signup
-        console.log(process.env.EXPO_PUBLIC_API_URL)
-      } catch (err: any) {
-        Alert.alert('Signup Failed', err.response?.data?.message || 'Try again');
-      }
+
+
+  const validateForm = (): boolean => {
+
+    clearBanner();
+
+    const next: typeof fieldErrors = {};
+
+    if (!isLogin && (!fullName.trim() || fullName.trim().length < 2)) {
+
+      next.name = 'Enter your full name (at least 2 characters).';
+
     }
+
+    if (!email.trim()) next.email = 'Email is required.';
+
+    else if (!emailOk(email)) next.email = 'Enter a valid email address.';
+
+    if (!password) next.password = 'Password is required.';
+
+    else if (!isLogin && password.length < 6) {
+
+      next.password = 'Use at least 6 characters for your password.';
+
+    }
+
+    setFieldErrors(next);
+
+    return Object.keys(next).length === 0;
+
   };
+
+
+
+  const handleContinue = async () => {
+
+    if (!validateForm()) return;
+
+    setLoading(true);
+
+    clearBanner();
+
+    const api = process.env.EXPO_PUBLIC_API_URL ?? '';
+
+
+
+    try {
+
+      if (isLogin) {
+
+        const res = await axios.post(`${api}/api/auth/login`, { email: email.trim(), password });
+
+        await login(res.data.access_token, {
+
+          id: email.trim(),
+
+          email: email.trim(),
+
+        });
+
+        router.replace('/startScaningProcess');
+
+      } else {
+
+        await axios.post(`${api}/api/auth/signup`, {
+
+          name: fullName.trim(),
+
+          email: email.trim(),
+
+          password,
+
+        });
+
+        try {
+
+          const loginRes = await axios.post(`${api}/api/auth/login`, {
+
+            email: email.trim(),
+
+            password,
+
+          });
+
+          await login(loginRes.data.access_token, {
+
+            id: email.trim(),
+
+            email: email.trim(),
+
+            name: fullName.trim(),
+
+          });
+
+          router.replace('/startScaningProcess');
+
+        } catch {
+
+          setBanner({
+
+            type: 'success',
+
+            text: 'Account created. Sign in with your email and password.',
+
+          });
+
+          setIsLogin(true);
+
+          setPassword('');
+
+        }
+
+      }
+
+    } catch (err: unknown) {
+
+      const msg = getApiErrorMessage(err, 'Request failed.');
+
+      setBanner({ type: 'error', text: msg });
+
+    } finally {
+
+      setLoading(false);
+
+    }
+
+  };
+
+
 
   const handleGoogleAuthWithBackend = async (idToken: string) => {
-    try {
-      const res = await axios.post(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/google`, {
-        token: idToken,
-      });
-      await login(res.data.access_token, { id: 'google-id', email: '' }); // Email can be fetched from idToken if needed
-      router.replace('/startScaningProcess');
-    } catch (error: any) {
-      console.error('Google Sign-in Error:', error);
-      Alert.alert('Google Auth Failed', error.response?.data?.message || error.message);
-    }
+
+    const api = process.env.EXPO_PUBLIC_API_URL ?? '';
+
+    const res = await axios.post(`${api}/api/auth/google`, { token: idToken });
+
+    await login(res.data.access_token, { id: 'google', email: '' });
+
+    router.replace('/startScaningProcess');
+
   };
+
+
 
   const handleGoogleAuth = async () => {
-    try {
-      await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      console.log('Google Sign-in User Info:', userInfo);
 
-      // Specifically use idToken for backend verification
+    try {
+
+      await GoogleSignin.hasPlayServices();
+
+      const userInfo = await GoogleSignin.signIn();
+
       const idToken = userInfo.data?.idToken;
-      if (idToken) {
-        handleGoogleAuthWithBackend(idToken);
-      } else {
-        throw new Error('No idToken received from Google');
+
+      if (idToken) await handleGoogleAuthWithBackend(idToken);
+
+      else throw new Error('No idToken received from Google.');
+
+    } catch (error: unknown) {
+
+      const e = error as { code?: string; message?: string };
+
+      if (e.code === statusCodes.SIGN_IN_CANCELLED) return;
+
+      if (e.code === statusCodes.IN_PROGRESS) return;
+
+      if (e.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+
+        setBanner({ type: 'error', text: 'Google Play Services not available on this device.' });
+
+        return;
+
       }
-    } catch (error: any) {
-      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-        // user cancelled the login flow
-        console.log('Google Sign-in Cancelled');
-      } else if (error.code === statusCodes.IN_PROGRESS) {
-        // operation (e.g. sign in) is in progress already
-        console.log('Google Sign-in In Progress');
-      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-        // play services not available or outdated
-        Alert.alert('Error', 'Google Play Services not available');
-      } else {
-        // some other error happened
-        console.error('Google Sign-in Error:', error);
-        Alert.alert('Google Auth Failed', error.message);
-      }
+
+      setBanner({
+
+        type: 'error',
+
+        text: getApiErrorMessage(error, 'Google sign-in failed.'),
+
+      });
+
     }
+
   };
+
+
 
   const handleGuestMode = () => {
+
     continueAsGuest();
+
     router.replace('/startScaningProcess');
+
   };
 
+
+
+  const subtitle = useMemo(
+
+    () =>
+
+      isLogin
+
+        ? 'Sign in to analyze crops with your trained model.'
+
+        : 'Create your account — verification is instant on this server.',
+
+    [isLogin],
+
+  );
+
+
+
   return (
-    <ScrollView className="flex-1 bg-white">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1"
-      >
-        {/* Logo */}
-        <View className="items-center mt-10 mb-2">
+
+    <AuthChrome>
+
+      <View className="px-6 pt-2" style={styles.page}>
+
+        {banner ? (
+
+          <View
+
+            style={[
+
+              styles.banner,
+
+              banner.type === 'error' ? styles.bannerErr : styles.bannerOk,
+
+            ]}
+
+          >
+
+            <Text
+
+              style={[styles.bannerText, banner.type === 'error' ? styles.bannerTextErr : styles.bannerTextOk]}
+
+            >
+
+              {banner.text}
+
+            </Text>
+
+          </View>
+
+        ) : null}
+
+
+
+        <View style={styles.logoBlock}>
+
           <Image
-            style={{ width: 150, height: 150 }}
-            source={require('../assets/images/logo.png')}
+
+            source={require('../assets/images/app-logo.png')}
+
+            style={styles.logoImage}
+
+            resizeMode="contain"
+
           />
+
+          <Text style={styles.headline}>Crop Disease Detector</Text>
+
+          <Text style={styles.subHead}>{subtitle}</Text>
+
         </View>
 
-        {/* Login / Signup Tabs */}
-        <View className="flex-row justify-around items-center mt-6 mb-10">
-          <TouchableOpacity onPress={() => setIsLogin(true)} className="w-1/2 items-center">
-            <Text className={`text-lg font-bold ${isLogin ? 'text-green-900' : 'text-gray-500'}`}>
+
+
+        <View style={styles.segmentOuter}>
+
+          <TouchableOpacity
+
+            onPress={() => {
+
+              setIsLogin(true);
+
+              clearBanner();
+
+              setFieldErrors({});
+
+            }}
+
+            activeOpacity={0.85}
+
+            style={[styles.segmentBtn, isLogin && styles.segmentBtnActive]}
+
+          >
+
+            <Text style={[styles.segmentLabel, isLogin ? styles.segmentLabelOn : styles.segmentLabelOff]} numberOfLines={1}>
+
               Log in
+
             </Text>
-            {isLogin && <View className="h-1 w-full bg-green-800 rounded-full mt-2" />}
+
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => setIsLogin(false)} className="w-1/2 items-center">
-            <Text className={`text-lg font-bold ${!isLogin ? 'text-green-900' : 'text-gray-500'}`}>
+          <TouchableOpacity
+
+            onPress={() => {
+
+              setIsLogin(false);
+
+              clearBanner();
+
+              setFieldErrors({});
+
+            }}
+
+            activeOpacity={0.85}
+
+            style={[styles.segmentBtn, !isLogin && styles.segmentBtnActive]}
+
+          >
+
+            <Text style={[styles.segmentLabel, !isLogin ? styles.segmentLabelOn : styles.segmentLabelOff]} numberOfLines={1}>
+
               Sign up
+
             </Text>
-            {!isLogin && <View className="h-1 w-full bg-green-800 rounded-full mt-2" />}
+
           </TouchableOpacity>
+
         </View>
 
-        {/* Form */}
-        <View className="px-8">
+
+
+        <View style={styles.card}>
+
           {!isLogin && (
-            <View className="mb-4">
-              <Text className="text-md font-bold text-gray-700 mb-2">Your Name</Text>
+
+            <View style={styles.fieldBlock}>
+
+              <Text style={styles.label}>Full name</Text>
+
               <TextInput
+
                 value={fullName}
-                onChangeText={setFullName}
-                placeholder="Enter your full name"
-                placeholderTextColor="#999"
-                className="border border-gray-400 rounded-xl px-4 py-3.5 text-base"
+
+                onChangeText={(t) => {
+
+                  setFullName(t);
+
+                  setFieldErrors((p) => ({ ...p, name: undefined }));
+
+                }}
+
+                placeholder="Jane Farmer"
+
+                placeholderTextColor={COLORS.textMuted}
+
+                style={styles.input}
+
               />
+
+              {fieldErrors.name ? <Text style={styles.fieldErr}>{fieldErrors.name}</Text> : null}
+
             </View>
+
           )}
 
-          <View className="mb-4">
-            <Text className="text-md font-bold text-gray-700 mb-2">Your Email</Text>
+
+
+          <View style={styles.fieldBlock}>
+
+            <Text style={styles.label}>Email</Text>
+
             <TextInput
+
               value={email}
-              onChangeText={setEmail}
+
+              onChangeText={(t) => {
+
+                setEmail(t);
+
+                setFieldErrors((p) => ({ ...p, email: undefined }));
+
+              }}
+
               keyboardType="email-address"
+
               autoCapitalize="none"
-              placeholder="Enter your email"
-              placeholderTextColor="#999"
-              className="border border-gray-400 rounded-xl px-4 py-3.5 text-base"
+
+              autoCorrect={false}
+
+              placeholder="you@farm.com"
+
+              placeholderTextColor={COLORS.textMuted}
+
+              style={styles.input}
+
             />
+
+            {fieldErrors.email ? <Text style={styles.fieldErr}>{fieldErrors.email}</Text> : null}
+
           </View>
 
-          <View className="mb-6 relative">
-            <Text className="text-md font-bold text-gray-700 mb-2">
-              {isLogin ? 'Password' : 'Create Password'}
-            </Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              placeholder="Enter your password"
-              placeholderTextColor="#999"
-              className="border border-gray-400 rounded-xl px-4 py-3.5 text-base pr-12"
-            />
-            <TouchableOpacity
-              className="absolute right-4 top-10"
-              onPress={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? <EyeClosed color="#666" /> : <Eye color="#666" />}
-            </TouchableOpacity>
+
+
+          <View style={[styles.fieldBlock, { marginBottom: 4 }]}>
+
+            <Text style={styles.label}>{isLogin ? 'Password' : 'Password'}</Text>
+
+            <View style={styles.inputRow}>
+
+              <TextInput
+
+                value={password}
+
+                onChangeText={(t) => {
+
+                  setPassword(t);
+
+                  setFieldErrors((p) => ({ ...p, password: undefined }));
+
+                }}
+
+                secureTextEntry={!showPassword}
+
+                placeholder="••••••••"
+
+                placeholderTextColor={COLORS.textMuted}
+
+                style={[styles.passwordInput, { flex: 1 }]}
+
+              />
+
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} hitSlop={12} style={{ padding: 8 }}>
+
+                {showPassword ? (
+
+                  <EyeOff color={COLORS.textSecondary} size={22} />
+
+                ) : (
+
+                  <Eye color={COLORS.textSecondary} size={22} />
+
+                )}
+
+              </TouchableOpacity>
+
+            </View>
+
+            {fieldErrors.password ? (
+
+              <Text style={styles.fieldErr}>{fieldErrors.password}</Text>
+
+            ) : (
+
+              <Text style={styles.hint}>
+
+                {isLogin ? 'Tap the eye to show or hide your password.' : 'Minimum 6 characters.'}
+
+              </Text>
+
+            )}
+
           </View>
+
+
 
           {isLogin && (
-            <View className="flex-row justify-between mb-6">
-              <TouchableOpacity onPress={handleGuestMode}>
-                <Text className="text-gray-500 text-sm">Guest Mode</Text>
+
+            <View style={styles.linkRow}>
+
+              <TouchableOpacity onPress={handleGuestMode} hitSlop={8} style={styles.linkHit}>
+
+                <Text style={styles.linkPrimary}>Continue as guest</Text>
+
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => router.push('/forget-password')}>
-                <Text className="text-gray-500 text-sm">Forgot password?</Text>
+
+              <TouchableOpacity onPress={() => router.push('/forget-password')} hitSlop={8} style={styles.linkHit}>
+
+                <Text style={styles.linkMuted}>Forgot password?</Text>
+
               </TouchableOpacity>
+
             </View>
+
           )}
 
-          {/* Continue Button */}
+
+
+          {!isLogin && <View style={{ height: 16 }} />}
+
+
+
           <TouchableOpacity
+
             onPress={handleContinue}
-            className="bg-green-900 py-4 rounded-xl items-center mb-6"
+
+            disabled={loading}
+
+            activeOpacity={0.9}
+
+            style={[styles.primaryBtn, loading && { opacity: 0.85 }]}
+
           >
-            <Text className="text-white text-base font-semibold">Continue</Text>
+
+            {loading ? (
+
+              <ActivityIndicator color={COLORS.white} />
+
+            ) : (
+
+              <Text style={styles.primaryBtnText}>{isLogin ? 'Sign in' : 'Create account'}</Text>
+
+            )}
+
           </TouchableOpacity>
 
-          {/* Divider */}
-          <View className="flex-row items-center mb-6">
-            <View className="flex-1 h-px bg-gray-300" />
-            <Text className="mx-4 text-gray-500 text-sm">Or</Text>
-            <View className="flex-1 h-px bg-gray-300" />
+
+
+          <View style={styles.orRow}>
+
+            <View style={styles.orLine} />
+
+            <Text style={styles.orText}>or</Text>
+
+            <View style={styles.orLine} />
+
           </View>
 
-          {/* Google Button - Triggers only on press */}
-          <TouchableOpacity
-            onPress={handleGoogleAuth}
-            className={`flex-row items-center justify-center border border-gray-400 rounded-xl py-4`}
-          >
-            <Image
-              source={require('../assets/images/google icon.png')}
-              style={{ width: 24, height: 24, marginRight: 12 }}
-            />
-            <Text className="text-gray-800 text-base font-medium">
-              {isLogin ? 'Login with Google' : 'Sign up with Google'}
-            </Text>
+
+
+          <TouchableOpacity onPress={handleGoogleAuth} activeOpacity={0.88} style={styles.googleBtn}>
+
+            <MaterialCommunityIcons name="google" size={22} color={COLORS.jet} style={{ marginRight: 12 }} />
+
+            <Text style={styles.googleBtnText}>{isLogin ? 'Continue with Google' : 'Sign up with Google'}</Text>
+
           </TouchableOpacity>
 
-          {/* Bottom Link */}
-          <View className="items-center mt-8">
-            <Text className="text-gray-600">
-              {isLogin ? "Don't have an account? " : 'Already have an account? '}
-              <Text
-                onPress={() => setIsLogin(!isLogin)}
-                className="text-blue-600 font-semibold"
-              >
-                {isLogin ? 'Sign up' : 'Log in'}
-              </Text>
-            </Text>
-          </View>
         </View>
-      </KeyboardAvoidingView>
-    </ScrollView>
+
+
+
+        <View style={styles.footerSwitch}>
+
+          <Text style={styles.footerQ}>{isLogin ? "Don't have an account?" : 'Already registered?'}</Text>
+
+          <TouchableOpacity
+
+            onPress={() => {
+
+              setIsLogin(!isLogin);
+
+              clearBanner();
+
+              setFieldErrors({});
+
+            }}
+
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+
+          >
+
+            <Text style={styles.footerAction}>{isLogin ? 'Sign up' : 'Log in'}</Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+      </View>
+
+    </AuthChrome>
+
   );
+
 };
 
+
+
 export default Index;
+
+
+
+const styles = StyleSheet.create({
+
+  page: {
+
+    width: '100%',
+
+    maxWidth: 440,
+
+    alignSelf: 'center',
+
+  },
+
+  banner: {
+
+    marginBottom: 16,
+
+    borderRadius: 16,
+
+    paddingHorizontal: 16,
+
+    paddingVertical: 12,
+
+    borderWidth: 1,
+
+  },
+
+  bannerErr: {
+
+    backgroundColor: COLORS.errorBg,
+
+    borderColor: COLORS.errorBorder,
+
+  },
+
+  bannerOk: {
+
+    backgroundColor: COLORS.successBg,
+
+    borderColor: COLORS.successBorder,
+
+  },
+
+  bannerText: {
+
+    fontSize: 14,
+
+    fontWeight: '600',
+
+    lineHeight: 20,
+
+  },
+
+  bannerTextErr: { color: COLORS.errorText },
+
+  bannerTextOk: { color: COLORS.successText },
+
+  logoBlock: {
+
+    alignItems: 'center',
+
+    marginBottom: 24,
+
+    width: '100%',
+
+  },
+
+  logoImage: {
+
+    width: '100%',
+
+    maxWidth: 360,
+
+    height: 112,
+
+    marginBottom: 16,
+
+  },
+
+  headline: {
+
+    color: COLORS.jet,
+
+    fontSize: 24,
+
+    fontWeight: '800',
+
+    letterSpacing: -0.5,
+
+    textAlign: 'center',
+
+  },
+
+  subHead: {
+
+    color: COLORS.textSecondary,
+
+    fontSize: 14,
+
+    marginTop: 8,
+
+    textAlign: 'center',
+
+    maxWidth: 320,
+
+    lineHeight: 20,
+
+  },
+
+  segmentOuter: {
+
+    flexDirection: 'row',
+
+    alignItems: 'stretch',
+
+    width: '100%',
+
+    borderRadius: 16,
+
+    padding: 4,
+
+    marginBottom: 24,
+
+    backgroundColor: COLORS.bgSubtle,
+
+    borderWidth: 1,
+
+    borderColor: COLORS.border,
+
+  },
+
+  segmentBtn: {
+
+    flex: 1,
+
+    minWidth: 0,
+
+    paddingVertical: 14,
+
+    paddingHorizontal: 8,
+
+    borderRadius: 12,
+
+    alignItems: 'center',
+
+    justifyContent: 'center',
+
+  },
+
+  segmentBtnActive: {
+
+    backgroundColor: COLORS.white,
+
+    shadowColor: '#000',
+
+    shadowOffset: { width: 0, height: 1 },
+
+    shadowOpacity: 0.06,
+
+    shadowRadius: 4,
+
+    elevation: 2,
+
+  },
+
+  segmentLabel: {
+
+    fontWeight: '700',
+
+    fontSize: 15,
+
+    textAlign: 'center',
+
+  },
+
+  segmentLabelOn: {
+
+    color: COLORS.jet,
+
+  },
+
+  segmentLabelOff: {
+
+    color: COLORS.textMuted,
+
+  },
+
+  card: {
+
+    borderRadius: 28,
+
+    borderWidth: 1,
+
+    borderColor: COLORS.border,
+
+    backgroundColor: COLORS.white,
+
+    padding: 20,
+
+    shadowColor: '#000',
+
+    shadowOffset: { width: 0, height: 2 },
+
+    shadowOpacity: 0.04,
+
+    shadowRadius: 8,
+
+    elevation: 2,
+
+  },
+
+  fieldBlock: {
+
+    marginBottom: 16,
+
+  },
+
+  label: {
+
+    color: COLORS.jetMuted,
+
+    fontSize: 11,
+
+    fontWeight: '700',
+
+    letterSpacing: 1,
+
+    textTransform: 'uppercase',
+
+    marginBottom: 8,
+
+  },
+
+  input: {
+
+    borderRadius: 16,
+
+    borderWidth: 1,
+
+    borderColor: COLORS.border,
+
+    backgroundColor: COLORS.bgMuted,
+
+    paddingHorizontal: 16,
+
+    paddingVertical: 14,
+
+    fontSize: 16,
+
+    color: COLORS.jet,
+
+  },
+
+  inputRow: {
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+
+    width: '100%',
+
+    borderRadius: 16,
+
+    borderWidth: 1,
+
+    borderColor: COLORS.border,
+
+    backgroundColor: COLORS.bgMuted,
+
+    paddingRight: 8,
+
+  },
+
+  passwordInput: {
+
+    minWidth: 0,
+
+    paddingHorizontal: 16,
+
+    paddingVertical: 14,
+
+    fontSize: 16,
+
+    color: COLORS.jet,
+
+  },
+
+  fieldErr: {
+
+    color: '#B91C1C',
+
+    fontSize: 12,
+
+    marginTop: 6,
+
+  },
+
+  hint: {
+
+    color: COLORS.textMuted,
+
+    fontSize: 11,
+
+    marginTop: 6,
+
+  },
+
+  linkRow: {
+
+    flexDirection: 'row',
+
+    flexWrap: 'wrap',
+
+    justifyContent: 'space-between',
+
+    alignItems: 'center',
+
+    gap: 12,
+
+    width: '100%',
+
+    marginTop: 16,
+
+    marginBottom: 20,
+
+  },
+
+  linkHit: {
+
+    paddingVertical: 4,
+
+  },
+
+  linkPrimary: {
+
+    color: COLORS.jet,
+
+    fontSize: 14,
+
+    fontWeight: '700',
+
+  },
+
+  linkMuted: {
+
+    color: COLORS.textSecondary,
+
+    fontSize: 14,
+
+    fontWeight: '600',
+
+  },
+
+  primaryBtn: {
+
+    backgroundColor: COLORS.jet,
+
+    borderRadius: 16,
+
+    paddingVertical: 16,
+
+    alignItems: 'center',
+
+    justifyContent: 'center',
+
+    flexDirection: 'row',
+
+  },
+
+  primaryBtnText: {
+
+    color: COLORS.white,
+
+    fontWeight: '800',
+
+    fontSize: 16,
+
+    letterSpacing: 0.3,
+
+  },
+
+  orRow: {
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+
+    width: '100%',
+
+    marginVertical: 24,
+
+  },
+
+  orLine: {
+
+    flex: 1,
+
+    height: 1,
+
+    backgroundColor: COLORS.border,
+
+    minWidth: 8,
+
+  },
+
+  orText: {
+
+    marginHorizontal: 16,
+
+    color: COLORS.textMuted,
+
+    fontSize: 11,
+
+    fontWeight: '700',
+
+    letterSpacing: 2,
+
+    textTransform: 'uppercase',
+
+  },
+
+  googleBtn: {
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+
+    justifyContent: 'center',
+
+    width: '100%',
+
+    borderRadius: 16,
+
+    borderWidth: 1,
+
+    borderColor: COLORS.borderStrong,
+
+    backgroundColor: COLORS.white,
+
+    paddingVertical: 16,
+
+  },
+
+  googleBtnText: {
+
+    color: COLORS.jet,
+
+    fontWeight: '700',
+
+    fontSize: 15,
+
+  },
+
+  footerSwitch: {
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+
+    justifyContent: 'center',
+
+    flexWrap: 'wrap',
+
+    width: '100%',
+
+    marginTop: 28,
+
+    marginBottom: 24,
+
+  },
+
+  footerQ: {
+
+    color: COLORS.textSecondary,
+
+    fontSize: 14,
+
+  },
+
+  footerAction: {
+
+    color: COLORS.jet,
+
+    fontWeight: '800',
+
+    fontSize: 14,
+
+    marginLeft: 4,
+
+  },
+
+});
+

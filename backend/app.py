@@ -5,38 +5,41 @@ from io import BytesIO
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
 import numpy as np
-import tensorflow as tf
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import os
+from fyp_plant_model import load_fyp_bundle, preprocess_image_bytes, predict_proba
+from agricore_keras import load_agricore_keras_bundle, predict_keras_probs
+from prediction_enrichment import enrich_prediction_context
+
+try:
+    from pytorch_cam import load_torch_predictor, torch_predict_with_overlay
+except Exception as _torch_e:
+    print(f"PyTorch Grad-CAM import failed: {_torch_e}")
+
+    def load_torch_predictor(_path):  # type: ignore
+        return False
+
+    def torch_predict_with_overlay(*_a, **_kw):  # type: ignore
+        return None
+
+
 import requests
 import json
-import base64  # Added for base64 encoding
 from datetime import timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 # For email sending
 from flask_mail import Mail, Message
-from pydantic import BaseModel
-import PIL
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import random
 app = Flask(__name__)
-
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_community.cache import InMemoryCache
-import langchain
-
-# Enable in-memory cache
-langchain.cache = InMemoryCache()
 
 # --- Configuration ---
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'your-super-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///crops.db"
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key')
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
-app.config["TF_ENABLE_ONEDNN_OPTS"] = os.environ.get('TF_ENABLE_ONEDNN_OPTS`', 0)
+app.config["TF_ENABLE_ONEDNN_OPTS"] = os.environ.get("TF_ENABLE_ONEDNN_OPTS", "0")
 
 # Flask-Mail Configuration
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
@@ -48,29 +51,6 @@ app.config['MAIL_PASSWORD'] = os.environ.get('EMAIL_PASS')
 # Google OAuth
 app.config['GOOGLE_WEB_CLIENT_ID'] = os.environ.get('GOOGLE_WEB_CLIENT_ID')
 app.config['GOOGLE_WEB_CLIENT_SECRET'] = os.environ.get('GOOGLE_WEB_CLIENT_SECRET')
-
-# === Pydantic Schema for Gemini Output ===
-class DiseaseResponse(BaseModel):
-    disease_name: str
-    plant:str
-    confidence_score: float
-    description: str
-    cure_recommendation: list[str]
-    prevention_tips: list[str]
-    causes:list[str]
-    not_affected: float
-    slightly_affected: float
-    affected: float
-
-# === GEMINI SETUP ===
-os.environ['GOOGLE_API_KEY']=os.environ.get('GOOGLE_GEMINI_API_KEY','AIzaSyBaacuG525Ivbyf5TclyR80Diu7V3KGe4U')
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
-parser = JsonOutputParser(pydantic_object=DiseaseResponse)  # Fixed: Use pydantic schema
-
-# Define this constant outside the function
-GEMINI_LLM_STRING = "gemini-2.5-flash_temp0.1"
-
-
 
 CORS(app)
 
@@ -107,198 +87,190 @@ def send_email(to, subject, body):
     except Exception as e:
         print(f"Email failed: {e}")
 
-# === LOAD MODEL ===
-model_path = "crops_disease_predication.keras"
-try:
-    model = tf.keras.models.load_model(model_path)
-    print("Model loaded")
-except Exception as e:
-    print(f"Model failed: {e}")
-    model = None
+# === Dual-sector model bundles ===
+# orchard_canopy: fruits & vegetables (PlantVillage-style multi-label model)
+# field_core: staple crops — Corn, Potato, Rice, Wheat, Sugarcane
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_BACKEND_DIR)
+_DEFAULT_GARDEN_DIR = os.path.join(_PROJECT_ROOT, "FYP_PlantDisease")
+# Default AgriCore artifacts: Keras model + class_labels.json (see agricore_keras.py)
+_DEFAULT_STAPLE_DIR = os.path.join(_PROJECT_ROOT, "crop leaves  2nd models saved")
 
-# === LABELS ===
-CLASS_LABELS = {
-    0: 'sugarcane_Bacterial Blight', 1: 'Corn___Common_Rust', 2: 'Corn___Gray_Leaf_Spot',
-    3: 'Corn___Healthy', 4: 'Corn___Northern_Leaf_Blight', 5: 'sugarcane_Healthy',
-    6: 'Potato___Early_Blight', 7: 'Potato___Healthy', 8: 'Potato___Late_Blight',
-    9: 'sugarcane_Red_Rot', 10: 'Rice___Brown_Spot', 11: 'Rice___Healthy',
-    12: 'Rice___Leaf_Blast', 13: 'Rice___Neck_Blast', 14: 'Wheat___Brown_Rust',
-    15: 'Wheat___Healthy', 16: 'Wheat___Yellow_Rust'
+GARDEN_DIR = os.environ.get("FYP_MODEL_DIR_GARDEN", os.environ.get("FYP_MODEL_DIR", _DEFAULT_GARDEN_DIR))
+STAPLE_DIR = os.environ.get("FYP_MODEL_DIR_STAPLE", _DEFAULT_STAPLE_DIR)
+
+SECTOR_LABELS = {
+    "orchard_canopy": {
+        "sector_title": "Canopy Lab",
+        "sector_tagline": "Fruits & garden crops",
+    },
+    "field_core": {
+        "sector_title": "AgriCore",
+        "sector_tagline": "Staple field crops",
+    },
 }
 
-REVERSE_LABELS = {}
-for idx, label in CLASS_LABELS.items():
-    if "___" in label:
-        plant_raw, disease_raw = label.split("___")
-    else:
-        parts = label.split("_")
-        plant_raw = parts[0]
-        disease_raw = " ".join(parts[1:])
-    
-    plant_map = {"corn": "Corn", "sugarcane": "Sugarcane", "potato": "Potato", "rice": "Rice", "wheat": "Wheat"}
-    plant = next((v for k, v in plant_map.items() if k in plant_raw.lower()), plant_raw.title())
-    disease = disease_raw.replace("_", " ").strip()
-    if "healthy" in disease.lower():
-        disease = "Healthy"
-    REVERSE_LABELS[idx] = {"plant_type": plant, "disease": disease}
+
+def _build_bundle(artifact_dir: str) -> Dict[str, Any]:
+    session, class_labels, reverse_labels, img_size, mean, std = load_fyp_bundle(artifact_dir)
+    torch_ok = bool(load_torch_predictor(artifact_dir))
+    onnx_ok = session is not None
+    return {
+        "dir": artifact_dir,
+        "session": session,
+        "class_labels": class_labels,
+        "reverse_labels": reverse_labels,
+        "image_size": img_size,
+        "mean": mean,
+        "std": std,
+        "torch_ok": torch_ok,
+        "onnx_ok": onnx_ok,
+        "keras_model": None,
+        "ready": onnx_ok or torch_ok,
+    }
 
 
-def gemini_enrich(plant: str, disease: str) -> dict:
-    prompt_text = f"""
-    Plant: {plant}
-    Disease: {disease}
-    Return JSON with: description, cure_recommendation (list), prevention_tips (list),causes (list).
-    {parser.get_format_instructions()}
-    """
-    
-
-    cache_key_string = prompt_text # Use the full text as the prompt key
-
-    llm_messages = (HumanMessage(content=prompt_text),)
+def _build_field_core_bundle(artifact_dir: str) -> Dict[str, Any]:
+    """Prefer ONNX/PyTorch bundle if present; otherwise load Keras five-crops model."""
+    b = _build_bundle(artifact_dir)
+    if b["ready"]:
+        return b
+    k = load_agricore_keras_bundle(artifact_dir)
+    if k.get("keras_model") is not None and k.get("ready"):
+        return k
+    return b
 
 
-    cached_result = langchain.cache.lookup(
-        prompt=cache_key_string, 
-        llm_string=GEMINI_LLM_STRING 
-    )
-    
-    if cached_result:
-        try:
-            # cached_result is a list of BaseMessage objects
-            return parser.parse(cached_result[0].content)
-        except Exception as e:
-            print(f"Error parsing cached Gemini result: {e}. Recalculating.")
-            pass
+SECTOR_BUNDLES: Dict[str, Dict[str, Any]] = {
+    "orchard_canopy": _build_bundle(GARDEN_DIR),
+    "field_core": _build_field_core_bundle(STAPLE_DIR),
+}
 
-    # If not in cache, run the LLM
-    try:
-        # 3. Run LLM using the list/tuple of message objects
-        raw_llm_response = llm.invoke(llm_messages)
-        
 
-        langchain.cache.update(
-            cache_key_string, 
-            GEMINI_LLM_STRING, 
-            (raw_llm_response,)
-        )
-        
-        # 5. Return parsed result
-        return parser.parse(raw_llm_response.content)
+def _decode_base64_image_field(img_field: Any) -> bytes:
+    if img_field is None or not isinstance(img_field, str):
+        raise ValueError("image must be a non-empty string")
+    s = img_field.strip()
+    if not s:
+        raise ValueError("image string is empty")
+    # Accept raw base64 or data URL
+    if "," in s:
+        s = s.split(",", 1)[1]
+    # JSON / transports sometimes strip padding; Python requires length multiple of 4
+    s = "".join(s.split())  # drop whitespace / newlines
+    # URL-safe base64 from some clients
+    s = s.replace("-", "+").replace("_", "/")
+    pad = len(s) % 4
+    if pad:
+        s += "=" * (4 - pad)
+    return base64.b64decode(s, validate=False)
 
-    except Exception as e:
-        print(f"Gemini enrichment failed: {e}")
-        return {
-            "description": f"{disease} on {plant}.",
-            "cure_recommendation": ["Consult expert"],
-            "prevention_tips": ["Maintain hygiene"]
-        }
 
-def vision_fallback(image_file):
-    # 4. Build the prompt with format instructions
-    prompt = (
-        "Analyze the plant image and return **only** valid JSON that follows this schema:\n"
-        f"{parser.get_format_instructions()}"
-    )
+def normalize_sector(raw: Any) -> str:
+    if raw is None:
+        return "orchard_canopy"
+    s = str(raw).strip().lower().replace("-", "_")
+    aliases = {
+        "garden": "orchard_canopy",
+        "fruit": "orchard_canopy",
+        "orchard": "orchard_canopy",
+        "plant_village": "orchard_canopy",
+        "canopy": "orchard_canopy",
+        "staple": "field_core",
+        "field": "field_core",
+        "cereal": "field_core",
+        "grain": "field_core",
+        "agricore": "field_core",
+    }
+    if s in aliases:
+        return aliases[s]
+    if s in SECTOR_BUNDLES:
+        return s
+    return "orchard_canopy"
 
-    message = HumanMessage(
-        content=[
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_file}"},
-        ]
-    )
 
-    # 5. Call Gemini → parse JSON
-    try:
-        chain = llm | parser                     # llm is your ChatGoogleGenerativeAI instance
-        raw = chain.invoke([message])
-        
-        # LangChain already returns a dict when using JsonOutputParser
-        return {
-            "disease_name": raw.get("disease_name", "Unknown"),
-            'plant_type':raw.get('plant','unknown'),
-            "confidence_score": float(raw.get("confidence_score", 0.0)),
-
-            "description": raw.get("description", ""),
-            "treatment": raw.get("cure_recommendation", []),
-            "prevention_tips": raw.get("prevention_tips", []),
-            'causes':raw.get('causes',[]),
-
-            "not_affected": float(raw.get('not_affected',0.0)),
-            "slightly_affected": float(raw.get('not_affected',0.0)),
-            "affected": float(raw.get('affected',0.0)),
-        }
-    except Exception as e:
-        print(f"[VISION FALLBACK ERROR] {e}")
-        return {
-            "disease_name": "Analysis failed",
-            "confidence_score": 0.0,
-            "description": "Gemini could not process the image.",
-            "cure_recommendation": ["Retry with a clearer photo"],
-            "prevention_tips": [],
-        }
-
-def format_output(idx: int, conf: float):
-    info = REVERSE_LABELS.get(idx, {"plant_type": "Unknown", "disease": "Unknown"})
+def format_output(
+    idx: int,
+    conf: float,
+    class_labels: Dict[int, str],
+    reverse_labels: Dict[int, Dict[str, str]],
+    sector_id: str,
+    used_grad_cam: bool,
+):
+    """Classifier-only JSON (no LLM). conf is top probability in [0, 1]. Chart fields use 0–100 %."""
+    info = reverse_labels.get(idx, {"plant_type": "Unknown", "disease": "Unknown"})
     plant = info["plant_type"]
     disease = info["disease"]
-    conf = round(conf, 3)
-    
-    # Define default values
-    treatment_list = []
-    causes_list = []
-    description = f"Prediction: {disease} on {plant} with confidence {conf}."
-    
-    if "healthy" in disease.lower():
-        # HEALTHY CASE: Confidence is high for the Healthy class
-        treatment = "No action needed."
-        description = f"{plant} is healthy! Continue good farming practices."
-        
-        not_affected = conf * 0.95  # Use prediction confidence as a base for high certainty
-        remaining = 1.0 - not_affected
-        slightly_affected = round(remaining * 0.8, 3)
-        affected = round(remaining * 0.2, 3)
-        
+    conf_frac = float(conf)
+    conf_pct = round(conf_frac * 100, 2)
+
+    raw_label = class_labels.get(idx, "")
+    is_healthy = "healthy" in disease.lower()
+
+    cam_note = (
+        " Regions highlighted on the heatmap show where the CNN attends (Grad-CAM)."
+        if used_grad_cam
+        else ""
+    )
+
+    if is_healthy:
+        description = (
+            f"{plant} predicted healthy ({conf_pct}% confidence). "
+            f"Training label: {raw_label or disease}."
+        )
+        not_affected_f = conf_frac * 0.95
+        remaining = 1.0 - not_affected_f
+        slightly_affected_f = round(remaining * 0.8, 6)
+        affected_f = round(remaining * 0.2, 6)
     else:
-        
-        # Dynamic Scores for DISEASED: 'affected' is directly linked to disease confidence
-        affected = conf
-        remaining = 1.0 - conf
-        
-        slightly_affected = round(remaining * 0.7, 3)  # 70% of the remainder goes here
-        not_affected = round(remaining * 0.3, 3)       # 30% of the remainder goes here
-        
-        # Ensure scores sum to 1.0 (with minor rounding adjustments)
-        total = affected + slightly_affected + not_affected
-        if total != 1.0:
-             # Adjust the smallest category to ensure sum is 1.0
-             not_affected = round(not_affected + (1.0 - total), 3)
+        description = (
+            f"Classifier top class: {raw_label or (plant + ' — ' + disease)} "
+            f"({conf_pct}% probability).{cam_note}"
+        )
+        affected_f = conf_frac
+        remaining = 1.0 - conf_frac
+        slightly_affected_f = round(remaining * 0.7, 6)
+        not_affected_f = round(remaining * 0.3, 6)
+        total = affected_f + slightly_affected_f + not_affected_f
+        if abs(total - 1.0) > 1e-6:
+            not_affected_f = round(not_affected_f + (1.0 - total), 6)
 
-        gemini_info = None
-        # Re-run or run Gemini if needed for full information
-        gemini_info = gemini_enrich(plant, disease)
-        description = gemini_info.get("description", description)
-        causes_list = gemini_info.get("causes", causes_list)
-        treatment_list = gemini_info.get("cure_recommendation", treatment_list)
-        # treatment = ", ".join(treatment_list)
+    affected_pct = round(affected_f * 100, 2)
+    slightly_pct = round(slightly_affected_f * 100, 2)
+    not_pct = round(not_affected_f * 100, 2)
 
+    enrich = enrich_prediction_context(
+        plant=plant,
+        disease=disease,
+        raw_label=raw_label,
+        conf_pct=conf_pct,
+        affected_pct=affected_pct,
+        slightly_pct=slightly_pct,
+        not_affected_pct=not_pct,
+        sector_id=sector_id,
+        is_healthy=is_healthy,
+    )
+    desc_suffix = enrich.get("description_suffix", "").strip()
+    if desc_suffix:
+        description = f"{description.rstrip()} {desc_suffix}"
 
-    # --- UNIFIED RETURN STRUCTURE ---
+    meta = SECTOR_LABELS.get(sector_id, SECTOR_LABELS["orchard_canopy"])
     return {
         "disease_name": disease,
         "plant_type": plant,
-        "confidence_score": conf,
-        
-        # Dynamic Severity Scores
-        "not_affected": not_affected,
-        "slightly_affected": slightly_affected,
-        "affected": affected,
-        
-        "treatment": treatment_list,
-        "prevention_tips":gemini_info.get('prevention_tips',[]),
-        'causes':causes_list,
-        "description": description
+        "confidence_score": conf_pct,
+        "not_affected": not_pct,
+        "slightly_affected": slightly_pct,
+        "affected": affected_pct,
+        "treatment": enrich["treatment"],
+        "prevention_tips": enrich["prevention_tips"],
+        "causes": enrich["causes"],
+        "description": description,
+        "sector": sector_id,
+        "sector_title": meta["sector_title"],
+        "sector_tagline": meta["sector_tagline"],
+        "grad_cam": used_grad_cam,
     }
-    # return gemini_info
 
 # --- AUTH ROUTES ---
 @app.route('/api/auth/signup', methods=['POST'])
@@ -421,41 +393,103 @@ def google_callback():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/")
+@app.route("/api/health")
+def health():
+    sectors_out = {}
+    any_ready = False
+    for sid, b in SECTOR_BUNDLES.items():
+        sectors_out[sid] = {
+            "artifact_dir": b["dir"],
+            "onnx": b["onnx_ok"],
+            "keras": b.get("keras_model") is not None,
+            "grad_cam": b["torch_ok"],
+            "ready": b["ready"],
+            **SECTOR_LABELS.get(sid, {}),
+        }
+        any_ready = any_ready or b["ready"]
+    return jsonify({
+        "ok": True,
+        "service": "crop-disease-api",
+        "model_loaded": any_ready,
+        "sectors": sectors_out,
+    }), 200
+
 # === PREDICT ROUTE ===
 @app.route('/api/predict', methods=['POST'])
 def predict():
-    if not model:
-        return jsonify({"error": "Model not loaded"}), 503
-
     file = request.get_json(silent=True)
-    if not 'image' in file:
-        return jsonify({'error':'image not loaded or Empty','data':file}),404
+    if not file or "image" not in file:
+        return jsonify({"error": "Missing JSON body or 'image' field"}), 400
+
+    sector_id = normalize_sector(file.get("sector"))
+    bundle = SECTOR_BUNDLES.get(sector_id)
+    if not bundle:
+        return jsonify({"error": "Unknown sector", "sector": sector_id}), 400
+
+    if not bundle["ready"]:
+        return jsonify({
+            "error": f"Model for sector '{sector_id}' is not deployed yet",
+            "sector": sector_id,
+            "hint": "Canopy Lab: FYP_PlantDisease with plant_disease_model.onnx. "
+            "AgriCore: crop leaves  2nd models saved with crops_disease_predication.keras + class_labels.json "
+            "(see /api/health for paths).",
+        }), 503
 
     try:
-        file = file.get('image') 
-        file = file.split(',')[1]
-        raw_base64 = base64.b64decode(file)
-        image_data = BytesIO(raw_base64) # <--- This is the object Keras needs!
+        raw_bytes = _decode_base64_image_field(file.get("image"))
 
-        img = tf.keras.preprocessing.image.load_img(image_data, target_size=(128, 128))
-        
-        # Continue with prediction
-        arr = np.expand_dims(tf.keras.preprocessing.image.img_to_array(img) / 255.0, axis=0)
-        pred = model.predict(arr, axis=1)[0]
-        idx = int(np.argmax(pred))
-        conf = float(pred[idx])
+        img_sz = int(bundle["image_size"])
+        mean_np = bundle["mean"]
+        std_np = bundle["std"]
+        mean_vec = np.asarray(mean_np, dtype=np.float32).reshape(3)
+        std_vec = np.asarray(std_np, dtype=np.float32).reshape(3)
 
-        if conf < 0.9:
-            print(f"Low confidence {conf:.2f} -> Using Gemini Vision")
-            # vision_fallback correctly handles the FileStorage object's stream
-            result = vision_fallback(file) 
+        overlay_b64: Optional[str] = None
+        bundle_infer = None
+        used_grad_cam = False
+        try:
+            if bundle["torch_ok"]:
+                bundle_infer = torch_predict_with_overlay(
+                    raw_bytes, mean_vec, std_vec, img_sz, bundle["dir"]
+                )
+                if bundle_infer:
+                    used_grad_cam = True
+        except Exception as cam_err:
+            print(f"Grad-CAM / PyTorch predict failed ({sector_id}): {cam_err}")
+            bundle_infer = None
+
+        session = bundle["session"]
+        class_labels = bundle["class_labels"]
+        reverse_labels = bundle["reverse_labels"]
+        keras_model = bundle.get("keras_model")
+
+        if bundle_infer:
+            probs, overlay_b64 = bundle_infer
+            idx = int(np.argmax(probs))
+            conf = float(probs[idx])
+        elif keras_model is not None:
+            probs = predict_keras_probs(keras_model, raw_bytes, img_sz)
+            idx = int(np.argmax(probs))
+            conf = float(probs[idx])
+        elif session:
+            image_data = BytesIO(raw_bytes)
+            batch = preprocess_image_bytes(image_data, img_sz, mean_np, std_np)
+            probs = predict_proba(session, batch)[0]
+            idx = int(np.argmax(probs))
+            conf = float(probs[idx])
         else:
-            result = format_output(idx, conf)
+            return jsonify({"error": "No inference backend available for this sector"}), 503
+
+        result = format_output(idx, conf, class_labels, reverse_labels, sector_id, used_grad_cam)
+        if overlay_b64:
+            result["heatmap_png_base64"] = overlay_b64
         return jsonify(result)
     except Exception as e:
         print(f"Prediction failed: {e}")
-        return jsonify({"error": str(e)}), 500   
+        return jsonify({"error": str(e)}), 500
 
 # --- RUN APP ---
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', debug=True, port=port)

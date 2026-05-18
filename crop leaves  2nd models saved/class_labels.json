@@ -1,0 +1,22 @@
+{
+  "image_size": 128,
+  "classes": [
+    "Bacterial Blight",
+    "Corn___Common_Rust",
+    "Corn___Gray_Leaf_Spot",
+    "Corn___Healthy",
+    "Corn___Northern_Leaf_Blight",
+    "Healthy",
+    "Potato___Early_Blight",
+    "Potato___Healthy",
+    "Potato___Late_Blight",
+    "Red Rot",
+    "Rice___Brown_Spot",
+    "Rice___Healthy",
+    "Rice___Leaf_Blast",
+    "Rice___Neck_Blast",
+    "Wheat___Brown_Rust",
+    "Wheat___Healthy",
+    "Wheat___Yellow_Rust"
+  ]
+}

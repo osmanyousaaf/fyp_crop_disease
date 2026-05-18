@@ -1,172 +1,177 @@
-import React, { useState,useRef, useEffect, act } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context'
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
-  TouchableWithoutFeedback,
-  Alert,
-} from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { ChevronLeftIcon } from 'lucide-react-native'; // Optional: for better back ico
-import { useLocalSearchParams, useRouter } from 'expo-router/build/hooks';
-import axios from 'axios';
-let CODE_LENGTH = 5
-
-type params={
-  email:string
-}
-const VerifyEmailScreen = () => {
-  
-  const [verifyCode, setVerifyCode] = useState(Array(CODE_LENGTH).fill(''));
-  const [isCompleted,setIsCompleted]=useState<boolean>(false)
-  const inputRef=useRef<Array<TextInput|null>>([])
-  const navigation = useNavigation();
-  const router = useRouter()
-  const params:params = useLocalSearchParams()
-  useEffect(()=>{
-    let fill = verifyCode.join('')
-    let complete = fill.length === CODE_LENGTH && /\d+$/.test(fill)
-    if (complete)console.log('good')
-  },[verifyCode])
-
-  const handleVerifyCode = (elm:string,index:number) => {
-      const digit = elm.replace(/[^0-9]/g,'')
-      if (digit.length == 1){
-        const newCode = [...verifyCode];
-        newCode[index]=digit;
-        setVerifyCode(newCode)
-        if(index < CODE_LENGTH - 1){
-          inputRef.current[index + 1]?.focus()
-        }
-      }else if(digit.length == 0){
-        const newCode = [...verifyCode];
-        newCode[index]=''
-        setVerifyCode(newCode)
-      }else if(digit.length > 1){
-        let paste = digit.slice(0,CODE_LENGTH).split('')
-        let conctcode = paste.concat(Array(CODE_LENGTH - paste.length).fill(''))
-        setVerifyCode(conctcode)
-        Keyboard.dismiss();
-      }
-  };
-  const handleKeyPress=(e:any,index:number)=>{
-    if(e.nativeEvent.Key === 'Backspace' && ! verifyCode[index] && index > 0){
-      inputRef.current[index - 1]?.focus()
-      const newCode = [...verifyCode];
-      newCode[index - 1]='';
-      setVerifyCode(newCode)
-    }
-  }
-  const classBasedInputColorChanging=(elm:string,index:number)=>{
-    let fill = verifyCode[index] !== '';
-    let active = fill || isCompleted;
-
-     return `
-      border  w-12 rounded-xl h-12 text-center text-base ${
-      isCompleted ? 'border-green-900 bg-green-50 text-green-900':active ?"border-gray-50 bg-white text-gray-800":
-      "border-gray-300 bg-white text-gray-300"
-      } 
-    `.replace(/\s+/g,' ').trim()
-    
-  }
-  return (
-    <SafeAreaView className="flex-1 bg-white">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1"
-      >
-        {/* Back Button */}
-        <TouchableOpacity
-          onPress={() => router.push('/forget-password')}
-          className="absolute top-12 left-6 z-10 bg-gray-100 rounded-full w-12 h-12 flex justify-center items-center shadow-md shadow-green-900"
-        >
-          {/* Option 1: Use Heroicon (install: npm install react-native-heroicons) */}
-          <ChevronLeftIcon size={36} color="#333" />
-
-         
-        </TouchableOpacity>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-
-        <View className="flex-1 justify-start px-8 pt-32 ">
-          {/* Title */}
-          <Text className="text-2xl font-bold poppins-bold text-gray-900 mb-4">
-            Check Your Email
-          </Text>
-
-          {/* Subtitle */}
-          <Text className="text-md text-gray-600 poppins-semibold capitalize">
-                we will sent reset link to <Text className='poppins-bold'>{params && params.email }</Text>  
-          </Text>
-          <Text className="text-md text-gray-600 mb-6 poppins-semibold capitalize">
-                enter 5 digit code that mentioned in the email  
-          </Text>
-
-          {/* Email Input */}
-          <View className="mb-6">
-            <Text className="text-md poppins-bold text-gray-700 mb-4">
-              Verify Code
-            </Text>
-            <View className='w-full h-auto flex justify-between items-center flex-row'>
-           {
-            verifyCode.map((elm,index:number)=>{
-              return <>
-            <TextInput
-              key={index+'098'}
-              value={elm}
-              ref={(ref)=>{inputRef.current[index]=ref}}
-              onChangeText={(e)=>handleVerifyCode(e,index)}
-              onPress={(e)=>handleKeyPress(e,index)}
-              keyboardType="numeric"
-              autoCapitalize="none"
-              placeholder=""
-              maxLength={1}
-              placeholderTextColor="#999"
-              textAlign='center'
-              className={classBasedInputColorChanging(elm as string,index)}
-            />  
-              </>
-            })
-           }
-            
-         
-            </View>
-          </View>
-          {/* Reset Password Button */}
-          <TouchableOpacity
-            onPress={()=>{
-              let code = verifyCode.join('').length == 5 ? verifyCode.join(''):''
-              axios.post(`${process.env.EXPO_PUBLIC_API_URL}/api/auth/verify`,{
-                email:params && params.email,code
-              }).then(
-                response => response.status == 200 && router.push(
-                  {
-                    pathname:'/setPassword',
-                    params:{
-                      email:params.email,
-                      code:code,
-                    }
-                  }
-                )
-              ).catch(
-                error => Alert.alert(error)
-              )
-            }}
-            className="bg-green-900 py-4 rounded-xl items-center"
-          >
-            <Text className="text-white text-base poppins-semibold">
-              Verify Code
-            </Text>
-          </TouchableOpacity>
-        </View>
-        </TouchableWithoutFeedback>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
-};
-
-export default VerifyEmailScreen;
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useRef, useState } from 'react';
+import {
+  Keyboard,
+  NativeSyntheticEvent,
+  StyleSheet,
+  Text,
+  TextInput,
+  TextInputKeyPressEventData,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { AuthChrome } from '../components/AuthChrome';
+import { ScreenHeader } from '../components/ScreenHeader';
+import { COLORS } from '../constants/theme';
+
+const CODE_LENGTH = 6;
+
+const VerifyEmailScreen = () => {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ email?: string | string[] }>();
+  const rawEmail = params.email;
+  const email =
+    typeof rawEmail === 'string' ? rawEmail : Array.isArray(rawEmail) ? (rawEmail[0] ?? '') : '';
+
+  const [digits, setDigits] = useState<string[]>(() => Array(CODE_LENGTH).fill(''));
+  const [banner, setBanner] = useState<{ type: 'error'; text: string } | null>(null);
+  const inputRefs = useRef<Array<TextInput | null>>([]);
+
+  const codeString = digits.join('');
+
+  const setDigitAt = (index: number, ch: string) => {
+    setDigits((prev) => {
+      const next = [...prev];
+      next[index] = ch;
+      return next;
+    });
+  };
+
+  const onChangeDigit = (raw: string, index: number) => {
+    setBanner(null);
+    const strip = raw.replace(/\D/g, '');
+    if (!strip) {
+      setDigitAt(index, '');
+      return;
+    }
+    if (strip.length === 1) {
+      setDigitAt(index, strip);
+      if (index < CODE_LENGTH - 1) inputRefs.current[index + 1]?.focus();
+      return;
+    }
+    const pasted = strip.slice(0, CODE_LENGTH).split('');
+    let lastFilled = index;
+    setDigits((prev) => {
+      const filled = [...prev];
+      for (let i = 0; i < pasted.length && index + i < CODE_LENGTH; i++) {
+        filled[index + i] = pasted[i];
+      }
+      lastFilled = Math.min(index + pasted.length - 1, CODE_LENGTH - 1);
+      return filled;
+    });
+    requestAnimationFrame(() => inputRefs.current[lastFilled]?.focus());
+    Keyboard.dismiss();
+  };
+
+  const onKeyPress = (
+    e: NativeSyntheticEvent<TextInputKeyPressEventData>,
+    index: number,
+  ) => {
+    if (e.nativeEvent.key === 'Backspace' && !digits[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+      setDigitAt(index - 1, '');
+    }
+  };
+
+  const verify = () => {
+    if (codeString.length !== CODE_LENGTH) {
+      setBanner({ type: 'error', text: `Enter all ${CODE_LENGTH} digits from your email.` });
+      return;
+    }
+    if (!email.trim()) {
+      setBanner({ type: 'error', text: 'Missing email. Start again from Forgot password.' });
+      return;
+    }
+    setBanner(null);
+    router.push({ pathname: '/setPassword', params: { email: email.trim(), code: codeString } });
+  };
+
+  return (
+    <AuthChrome>
+      <View className="px-6 pt-2 flex-1">
+        <ScreenHeader
+          title="Verification code"
+          subtitle={`Enter the ${CODE_LENGTH}-digit code sent to ${email || 'your inbox'}.`}
+          onBack={() => router.back()}
+        />
+
+        {banner ? (
+          <View style={styles.bannerErr}>
+            <Text style={styles.bannerErrText}>{banner.text}</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.digitCard}>
+          <View style={styles.digitRow}>
+            {digits.map((d, index) => (
+              <TextInput
+                key={index}
+                ref={(r) => {
+                  inputRefs.current[index] = r;
+                }}
+                value={d}
+                onChangeText={(t) => onChangeDigit(t, index)}
+                onKeyPress={(e) => onKeyPress(e, index)}
+                keyboardType="number-pad"
+                maxLength={CODE_LENGTH}
+                textAlign="center"
+                selectTextOnFocus
+                placeholder="·"
+                placeholderTextColor={COLORS.textMuted}
+                style={styles.digitInput}
+              />
+            ))}
+          </View>
+        </View>
+
+        <TouchableOpacity onPress={verify} activeOpacity={0.92} style={styles.primaryBtn}>
+          <Text style={styles.primaryBtnText}>Continue</Text>
+        </TouchableOpacity>
+      </View>
+    </AuthChrome>
+  );
+};
+
+export default VerifyEmailScreen;
+
+const styles = StyleSheet.create({
+  bannerErr: {
+    marginBottom: 20,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    backgroundColor: COLORS.errorBg,
+    borderColor: COLORS.errorBorder,
+  },
+  bannerErrText: { color: COLORS.errorText, fontSize: 14, fontWeight: '600', lineHeight: 20 },
+  digitCard: {
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+    padding: 20,
+    marginBottom: 24,
+  },
+  digitRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  digitInput: {
+    flex: 1,
+    minWidth: 0,
+    aspectRatio: 1,
+    maxHeight: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.borderStrong,
+    backgroundColor: COLORS.bgMuted,
+    fontSize: 20,
+    fontWeight: '800',
+    color: COLORS.jet,
+  },
+  primaryBtn: {
+    backgroundColor: COLORS.jet,
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  primaryBtnText: { color: COLORS.white, fontWeight: '800', fontSize: 16 },
+});
