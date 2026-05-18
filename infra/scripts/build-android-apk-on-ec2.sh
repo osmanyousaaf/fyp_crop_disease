@@ -9,6 +9,7 @@ API_PUBLIC_URL="${API_PUBLIC_URL:?Set API_PUBLIC_URL e.g. http://1.2.3.4:5020}"
 cd "$ROOT/frontCrops"
 
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
+export ANDROID_HOME="$ANDROID_SDK_ROOT"
 export PATH="$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools"
 
 echo "EXPO_PUBLIC_API_URL=$API_PUBLIC_URL" > .env.local
