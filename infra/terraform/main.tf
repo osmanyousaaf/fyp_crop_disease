@@ -11,6 +11,12 @@ data "aws_subnets" "default" {
   }
 }
 
+# Default VPC subnets can span AZs like us-east-1e where t3.micro is unavailable.
+data "aws_subnet" "default_vpc" {
+  for_each = toset(data.aws_subnets.default.ids)
+  id       = each.value
+}
+
 data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
@@ -80,7 +86,14 @@ resource "aws_iam_instance_profile" "ec2" {
 }
 
 locals {
-  subnet_id = var.subnet_id != "" ? var.subnet_id : data.aws_subnets.default.ids[0]
+  # Avoid us-east-1e for burstable types (AWS returns Unsupported for t3.micro there).
+  subnet_candidates = [
+    for sid in data.aws_subnets.default.ids : sid
+    if data.aws_subnet.default_vpc[sid].availability_zone != "us-east-1e"
+  ]
+  subnet_id = var.subnet_id != "" ? var.subnet_id : (
+    length(local.subnet_candidates) > 0 ? local.subnet_candidates[0] : data.aws_subnets.default.ids[0]
+  )
 }
 
 resource "aws_instance" "app" {

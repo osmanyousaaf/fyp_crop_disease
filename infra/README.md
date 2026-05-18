@@ -88,3 +88,7 @@ The script writes `frontCrops/.env.local`, runs `expo prebuild`, and **`assemble
 
 - Tighten **`ssh_cidr`** and consider restricting **`api_allowed_cidrs`** if you use a VPN.
 - Do **not** commit real `.env` / API keys; use SSM Parameter Store or Secrets Manager for production.
+
+## Troubleshooting
+
+- **`t3.micro` Unsupported in `us-east-1e`**: The default VPC may place the instance in AZ **`us-east-1e`**, where some burstable types are unavailable. Terraform now **skips `us-east-1e`** when auto-selecting a subnet. You can also set **`subnet_id`** in `terraform.tfvars` to a subnet in **`us-east-1a`–`us-east-1f`** (from EC2 → Subnets).
