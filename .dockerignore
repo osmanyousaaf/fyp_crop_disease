@@ -1,0 +1,18 @@
+.git
+.github
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.env.*
+!.env.example
+**/venv
+**/node_modules
+**/.expo
+infra/terraform/.terraform
+infra/terraform/*.tfstate*
+*.md
+.DS_Store
+test images

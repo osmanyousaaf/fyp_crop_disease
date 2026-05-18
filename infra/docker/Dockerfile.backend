@@ -1,0 +1,39 @@
+# Build from repository root:
+#   docker build -f infra/docker/Dockerfile.backend -t crop-api:latest .
+#
+# Linux/amd64 recommended on AWS EC2 (Intel/AMD).
+FROM --platform=linux/amd64 python:3.11-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TF_ENABLE_ONEDNN_OPTS=0 \
+    PORT=5020 \
+    FLASK_DEBUG=false
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Project layout matches backend expectations: parent of `backend/` holds model dirs.
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt gunicorn
+
+COPY backend/ /app/backend/
+COPY FYP_PlantDisease/ /app/FYP_PlantDisease/
+COPY ["crop leaves  2nd models saved/", "/app/crop leaves  2nd models saved/"]
+
+WORKDIR /app/backend
+
+EXPOSE 5020
+
+# Single worker: TensorFlow/PyTorch models are heavy in RAM.
+CMD exec gunicorn \
+    --bind 0.0.0.0:${PORT} \
+    --workers 1 \
+    --threads 4 \
+    --timeout 300 \
+    --worker-class gthread \
+    app:app
