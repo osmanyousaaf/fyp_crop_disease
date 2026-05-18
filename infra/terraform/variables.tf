@@ -6,14 +6,14 @@ variable "aws_region" {
 
 variable "instance_type" {
   type        = string
-  description = "EC2 size: backend + local APK builds need RAM and disk (e.g. t3.xlarge)."
-  default     = "t3.xlarge"
+  description = "EC2 instance type. Some accounts (e.g. AWS Educate / Free Tier–only) only allow free-tier sizes — use t3.micro or t2.micro there. For Docker + TensorFlow + Android builds, use t3.xlarge or larger when your account allows it."
+  default     = "t3.micro"
 }
 
 variable "volume_size_gb" {
   type        = number
-  description = "Root GP3 volume size (Android SDK + Gradle cache needs space)."
-  default     = 120
+  description = "Root GP3 volume size. Free Tier includes limited EBS; 30 GB stays within typical trial allowance. Raise for Android SDK + Gradle (e.g. 120) when not cost-sensitive."
+  default     = 30
 }
 
 variable "api_port" {

@@ -21,8 +21,8 @@ Important variables (override with `-var` or a `terraform.tfvars` file):
 | Variable            | Default       | Notes                                      |
 |---------------------|---------------|--------------------------------------------|
 | `aws_region`        | `us-east-1`   |                                            |
-| `instance_type`     | `t3.xlarge`   | Increase if TensorFlow OOMs during infer.  |
-| `volume_size_gb`    | `120`         | Android SDK + Gradle needs disk.           |
+| `instance_type`     | `t3.micro`    | **Educate / Free Tier–only accounts** cannot launch `t3.xlarge`; use `t3.micro`/`t2.micro` or remove the restriction, then scale up for ML + Android builds. |
+| `volume_size_gb`    | `30`          | Raise (e.g. `120`) when building APKs on the box if you have disk headroom. |
 | `ssh_cidr`          | `0.0.0.0/0`   | **Restrict** to your IP (`x.x.x.x/32`).    |
 | `key_name`          | `""`          | Set to your key pair name for SSH.        |
 
