@@ -1,5 +1,5 @@
 /** API sector ids — must match backend `normalize_sector` canonical keys. */
-export type CropSectorId = 'orchard_canopy' | 'field_core';
+export type CropSectorId = 'orchard_canopy' | 'field_core' | 'crop_vision';
 
 export const STORAGE_KEY_SECTOR = 'crop_sector_v1';
 
@@ -28,8 +28,18 @@ export const CROP_SECTORS: {
     subtitle: 'Staple crop belt scanner',
     highlights: ['Corn', 'Potato', 'Rice', 'Wheat', 'Sugarcane', 'Built for broadacre & subsistence farms'],
   },
+  {
+    id: 'crop_vision',
+    brand: 'CropVision',
+    subtitle: 'CNN-powered multi-crop diagnostics',
+    highlights: [
+      'Corn, Potato, Rice, Wheat, Sugarcane',
+      '17 disease classes · 20K training images',
+      'Deep CNN model for field crop analysis',
+    ],
+  },
 ];
 
 export function isCropSectorId(v: string | null | undefined): v is CropSectorId {
-  return v === 'orchard_canopy' || v === 'field_core';
+  return v === 'orchard_canopy' || v === 'field_core' || v === 'crop_vision';
 }

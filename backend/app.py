@@ -9,6 +9,7 @@ from flask_jwt_extended import JWTManager, create_access_token, jwt_required, ge
 import os
 from fyp_plant_model import load_fyp_bundle, preprocess_image_bytes, predict_proba
 from agricore_keras import load_agricore_keras_bundle, predict_keras_probs
+from cnn_crop_model import load_cnn_crop_bundle, predict_cnn_crop_probs
 from prediction_enrichment import enrich_prediction_context
 
 try:
@@ -95,9 +96,11 @@ _PROJECT_ROOT = os.path.dirname(_BACKEND_DIR)
 _DEFAULT_GARDEN_DIR = os.path.join(_PROJECT_ROOT, "FYP_PlantDisease")
 # Default AgriCore artifacts: Keras model + class_labels.json (see agricore_keras.py)
 _DEFAULT_STAPLE_DIR = os.path.join(_PROJECT_ROOT, "crop leaves  2nd models saved")
+_DEFAULT_CNN_DIR = os.path.join(_PROJECT_ROOT, "CNN_model_saved")
 
 GARDEN_DIR = os.environ.get("FYP_MODEL_DIR_GARDEN", os.environ.get("FYP_MODEL_DIR", _DEFAULT_GARDEN_DIR))
 STAPLE_DIR = os.environ.get("FYP_MODEL_DIR_STAPLE", _DEFAULT_STAPLE_DIR)
+CNN_DIR = os.environ.get("FYP_MODEL_DIR_CNN", _DEFAULT_CNN_DIR)
 
 SECTOR_LABELS = {
     "orchard_canopy": {
@@ -107,6 +110,10 @@ SECTOR_LABELS = {
     "field_core": {
         "sector_title": "AgriCore",
         "sector_tagline": "Staple field crops",
+    },
+    "crop_vision": {
+        "sector_title": "CropVision",
+        "sector_tagline": "CNN multi-crop diagnostics",
     },
 }
 
@@ -141,9 +148,15 @@ def _build_field_core_bundle(artifact_dir: str) -> Dict[str, Any]:
     return b
 
 
+def _build_crop_vision_bundle(artifact_dir: str) -> Dict[str, Any]:
+    """Load the CropVision CNN model (20K multi-crop disease dataset)."""
+    return load_cnn_crop_bundle(artifact_dir)
+
+
 SECTOR_BUNDLES: Dict[str, Dict[str, Any]] = {
     "orchard_canopy": _build_bundle(GARDEN_DIR),
     "field_core": _build_field_core_bundle(STAPLE_DIR),
+    "crop_vision": _build_crop_vision_bundle(CNN_DIR),
 }
 
 
@@ -181,6 +194,10 @@ def normalize_sector(raw: Any) -> str:
         "cereal": "field_core",
         "grain": "field_core",
         "agricore": "field_core",
+        "cnn": "crop_vision",
+        "cropvision": "crop_vision",
+        "multi_crop": "crop_vision",
+        "vision": "crop_vision",
     }
     if s in aliases:
         return aliases[s]
@@ -469,7 +486,10 @@ def predict():
             idx = int(np.argmax(probs))
             conf = float(probs[idx])
         elif keras_model is not None:
-            probs = predict_keras_probs(keras_model, raw_bytes, img_sz)
+            if sector_id == "crop_vision":
+                probs = predict_cnn_crop_probs(keras_model, raw_bytes, img_sz)
+            else:
+                probs = predict_keras_probs(keras_model, raw_bytes, img_sz)
             idx = int(np.argmax(probs))
             conf = float(probs[idx])
         elif session:
