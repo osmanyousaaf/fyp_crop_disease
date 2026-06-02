@@ -4,16 +4,17 @@
     "slug": "crop-dieases-checker",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png",
+    "icon": "./assets/images/app-logo.png",
     "scheme": "cropdiseasechecker",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cropdiseasechecker"
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./assets/images/app-logo.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -29,7 +30,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/logo.png",
+          "image": "./assets/images/app-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
@@ -40,18 +41,17 @@
       ],
       "expo-web-browser",
       "expo-secure-store",
-      "@react-native-google-signin/google-signin"
+      "expo-font"
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     },
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "0c43af02-4223-43e0-81d3-c7a5b1774751"
+        "projectId": "2a98357c-6d15-4e1a-9c4c-62003e5448c0"
       }
     },
-    "owner": "saqibjani1234"
+    "owner": "usmanyousaaaf"
   }
 }

@@ -27,6 +27,7 @@ import requests
 import json
 from datetime import timedelta
 from typing import Dict, Any, Optional
+import threading
 # For email sending
 from flask_mail import Mail, Message
 from google.oauth2 import id_token
@@ -141,10 +142,43 @@ def _build_field_core_bundle(artifact_dir: str) -> Dict[str, Any]:
     return b
 
 
-SECTOR_BUNDLES: Dict[str, Dict[str, Any]] = {
-    "orchard_canopy": _build_bundle(GARDEN_DIR),
-    "field_core": _build_field_core_bundle(STAPLE_DIR),
-}
+SECTOR_IDS = frozenset({"orchard_canopy", "field_core"})
+
+_bundle_lock = threading.Lock()
+_bundles: Optional[Dict[str, Dict[str, Any]]] = None
+_bundle_load_error: Optional[str] = None
+_models_ready = threading.Event()
+
+
+def _warm_models_worker() -> None:
+    """Load heavy ML bundles after Gunicorn binds so /api/health can respond immediately."""
+    global _bundles, _bundle_load_error
+    try:
+        loaded = {
+            "orchard_canopy": _build_bundle(GARDEN_DIR),
+            "field_core": _build_field_core_bundle(STAPLE_DIR),
+        }
+        with _bundle_lock:
+            _bundles = loaded
+            _bundle_load_error = None
+    except Exception as e:
+        print(f"Model warmup failed: {e}")
+        with _bundle_lock:
+            _bundle_load_error = str(e)
+    finally:
+        _models_ready.set()
+
+
+def get_sector_bundles() -> Dict[str, Dict[str, Any]]:
+    """Used by /api/predict; blocks until background warmup finishes or fails."""
+    if not _models_ready.wait(timeout=900):
+        raise RuntimeError("Model loading timed out after 900s")
+    with _bundle_lock:
+        if _bundle_load_error:
+            raise RuntimeError(_bundle_load_error)
+        if _bundles is None:
+            raise RuntimeError("Model loading did not produce bundles")
+        return _bundles
 
 
 def _decode_base64_image_field(img_field: Any) -> bytes:
@@ -184,7 +218,7 @@ def normalize_sector(raw: Any) -> str:
     }
     if s in aliases:
         return aliases[s]
-    if s in SECTOR_BUNDLES:
+    if s in SECTOR_IDS:
         return s
     return "orchard_canopy"
 
@@ -396,9 +430,33 @@ def google_callback():
 @app.route("/")
 @app.route("/api/health")
 def health():
+    if not _models_ready.is_set():
+        return jsonify({
+            "ok": True,
+            "service": "crop-disease-api",
+            "model_loaded": False,
+            "status": "loading_models",
+            "sectors": {},
+        }), 200
+
+    with _bundle_lock:
+        err = _bundle_load_error
+        bundles = _bundles
+
+    if err:
+        return jsonify({
+            "ok": False,
+            "service": "crop-disease-api",
+            "model_loaded": False,
+            "status": "model_load_failed",
+            "error": err,
+            "sectors": {},
+        }), 503
+
+    assert bundles is not None
     sectors_out = {}
     any_ready = False
-    for sid, b in SECTOR_BUNDLES.items():
+    for sid, b in bundles.items():
         sectors_out[sid] = {
             "artifact_dir": b["dir"],
             "onnx": b["onnx_ok"],
@@ -423,7 +481,12 @@ def predict():
         return jsonify({"error": "Missing JSON body or 'image' field"}), 400
 
     sector_id = normalize_sector(file.get("sector"))
-    bundle = SECTOR_BUNDLES.get(sector_id)
+    try:
+        bundles = get_sector_bundles()
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "sector": sector_id}), 503
+
+    bundle = bundles.get(sector_id)
     if not bundle:
         return jsonify({"error": "Unknown sector", "sector": sector_id}), 400
 
@@ -488,6 +551,8 @@ def predict():
     except Exception as e:
         print(f"Prediction failed: {e}")
         return jsonify({"error": str(e)}), 500
+
+threading.Thread(target=_warm_models_worker, name="model-warmup", daemon=True).start()
 
 # --- RUN APP ---
 if __name__ == '__main__':

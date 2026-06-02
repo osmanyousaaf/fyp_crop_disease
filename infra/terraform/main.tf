@@ -115,7 +115,7 @@ resource "aws_instance" "app" {
 
   user_data = <<-EOT
     #!/bin/bash
-    # Install SSM agent first so Session Manager works even if later steps fail (Educate / slow dnf).
+    # SSM agent first so Session Manager works even if later steps fail.
     set -uxo pipefail
     dnf install -y amazon-ssm-agent
     systemctl enable amazon-ssm-agent
@@ -127,6 +127,53 @@ resource "aws_instance" "app" {
     systemctl enable docker
     systemctl start docker
     usermod -aG docker ec2-user || true
+
+    # 4 GB swap — prevents OOM when TF + PyTorch + ONNX all load simultaneously.
+    if [ ! -f /swapfile ]; then
+      fallocate -l 4G /swapfile
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+
+    # Clone repo and deploy Docker container.
+    REPO_URL="https://github.com/osmanyousaaf/fyp_crop_disease.git"
+    REPO_DIR="/opt/fyp_crop_disease"
+    git clone --depth 1 --branch main "$REPO_URL" "$REPO_DIR" 2>/dev/null \
+      || git clone --depth 1 "$REPO_URL" "$REPO_DIR" || true
+
+    if [ -d "$REPO_DIR" ]; then
+      cd "$REPO_DIR"
+
+      # Patch Gunicorn command to recycle worker every ~100 requests (prevents memory leak).
+      sed -i 's/--worker-class gthread/--max-requests 100 --max-requests-jitter 20 --graceful-timeout 120 --worker-class gthread/' \
+        infra/docker/Dockerfile.backend 2>/dev/null || true
+
+      # Generate persistent secrets.
+      SECRET_FILE="/etc/crop-api.env"
+      if [ ! -f "$SECRET_FILE" ]; then
+        JWT_SECRET_KEY="$(openssl rand -hex 32)"
+        FLASK_SECRET_KEY="$(openssl rand -hex 32)"
+        printf 'JWT_SECRET_KEY=%s\nFLASK_SECRET_KEY=%s\n' "$JWT_SECRET_KEY" "$FLASK_SECRET_KEY" > "$SECRET_FILE"
+        chmod 600 "$SECRET_FILE"
+      fi
+      set -a; source "$SECRET_FILE"; set +a
+
+      docker build -f infra/docker/Dockerfile.backend -t crop-api:latest . \
+        && docker rm -f crop-api 2>/dev/null || true \
+        && docker run -d \
+             --name crop-api \
+             --restart unless-stopped \
+             -p 5020:5020 \
+             -e PORT=5020 \
+             -e FLASK_DEBUG=false \
+             -e FLASK_SECRET_KEY="$FLASK_SECRET_KEY" \
+             -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+             -e TF_CPP_MIN_LOG_LEVEL=2 \
+             -e CUDA_VISIBLE_DEVICES=-1 \
+             crop-api:latest
+    fi
   EOT
 
   metadata_options {

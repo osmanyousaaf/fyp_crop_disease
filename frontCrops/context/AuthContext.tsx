@@ -28,8 +28,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
+        let cancelled = false;
         const loadStorage = async () => {
-            try {
+            const timeout = new Promise<void>((resolve) => setTimeout(resolve, 4000));
+            const read = async () => {
                 const storedToken = await SecureStore.getItemAsync('userToken');
                 const storedGuest = await AsyncStorage.getItem('isGuest');
                 const storedUser = await AsyncStorage.getItem('userData');
@@ -41,13 +43,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 } else if (storedGuest === 'true') {
                     setIsGuest(true);
                 }
+            };
+            try {
+                await Promise.race([read(), timeout]);
             } catch (e) {
                 console.error('Failed to load auth state', e);
             } finally {
-                setIsLoading(false);
+                if (!cancelled) setIsLoading(false);
             }
         };
         loadStorage();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     const login = async (newToken: string, userData: User) => {

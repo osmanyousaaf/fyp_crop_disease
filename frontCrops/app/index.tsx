@@ -1,4 +1,4 @@
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+// Google Sign-In disabled — requires google-services.json setup
 
 import axios from 'axios';
 
@@ -88,17 +88,6 @@ const Index = () => {
 
 
 
-  useEffect(() => {
-
-    GoogleSignin.configure({
-
-      webClientId: process.env.EXPO_PUBLIC_WEB_CLIENT_ID,
-
-      offlineAccess: true,
-
-    });
-
-  }, []);
 
 
 
@@ -234,59 +223,9 @@ const Index = () => {
 
 
 
-  const handleGoogleAuthWithBackend = async (idToken: string) => {
-
-    const api = process.env.EXPO_PUBLIC_API_URL ?? '';
-
-    const res = await axios.post(`${api}/api/auth/google`, { token: idToken });
-
-    await login(res.data.access_token, { id: 'google', email: '' });
-
-    router.replace('/startScaningProcess');
-
-  };
-
-
-
   const handleGoogleAuth = async () => {
 
-    try {
-
-      await GoogleSignin.hasPlayServices();
-
-      const userInfo = await GoogleSignin.signIn();
-
-      const idToken = userInfo.data?.idToken;
-
-      if (idToken) await handleGoogleAuthWithBackend(idToken);
-
-      else throw new Error('No idToken received from Google.');
-
-    } catch (error: unknown) {
-
-      const e = error as { code?: string; message?: string };
-
-      if (e.code === statusCodes.SIGN_IN_CANCELLED) return;
-
-      if (e.code === statusCodes.IN_PROGRESS) return;
-
-      if (e.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-
-        setBanner({ type: 'error', text: 'Google Play Services not available on this device.' });
-
-        return;
-
-      }
-
-      setBanner({
-
-        type: 'error',
-
-        text: getApiErrorMessage(error, 'Google sign-in failed.'),
-
-      });
-
-    }
+    setBanner({ type: 'error', text: 'Google Sign-In is not available in this build. Please use email/password.' });
 
   };
 

@@ -7,6 +7,8 @@ FROM --platform=linux/amd64 python:3.11-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TF_ENABLE_ONEDNN_OPTS=0 \
+    TF_CPP_MIN_LOG_LEVEL=2 \
+    CUDA_VISIBLE_DEVICES=-1 \
     PORT=5020 \
     FLASK_DEBUG=false
 
@@ -30,10 +32,15 @@ WORKDIR /app/backend
 EXPOSE 5020
 
 # Single worker: TensorFlow/PyTorch models are heavy in RAM.
+# max-requests recycles the worker every 100 requests to prevent memory leaks.
+# graceful-timeout lets in-flight inference finish before the old worker dies.
 CMD exec gunicorn \
     --bind 0.0.0.0:${PORT} \
     --workers 1 \
-    --threads 4 \
-    --timeout 300 \
+    --threads 2 \
+    --timeout 600 \
+    --graceful-timeout 120 \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
     --worker-class gthread \
     app:app

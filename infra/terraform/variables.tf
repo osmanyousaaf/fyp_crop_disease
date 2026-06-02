@@ -6,8 +6,8 @@ variable "aws_region" {
 
 variable "instance_type" {
   type        = string
-  description = "EC2 instance type. Some accounts (e.g. AWS Educate / Free Tier–only) only allow free-tier sizes — use t3.micro or t2.micro there. For Docker + TensorFlow + Android builds, use t3.xlarge or larger when your account allows it."
-  default     = "t3.micro"
+  description = "EC2 instance type. t3.micro (~1 GiB RAM) often OOM-kills Gunicorn under ONNX+PyTorch+TensorFlow; use t3.small or t3.medium for stable inference. Free Tier / Educate may require t3.micro or t2.micro. For Android SDK builds on-instance, use t3.xlarge+ when allowed."
+  default     = "t3.small"
 }
 
 variable "volume_size_gb" {

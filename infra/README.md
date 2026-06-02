@@ -56,8 +56,16 @@ Smoke test from your laptop:
 curl "http://<ELASTIC_IP>:5020/api/health"
 ```
 
+Smoke test all routes from your laptop (needs `curl` + `python3`):
+
+```bash
+bash infra/scripts/smoke-test-aws-api.sh
+```
+
 Production notes:
 
+- On first deploy the script creates **`/etc/crop-api.env`** with random **`JWT_SECRET_KEY`** and **`FLASK_SECRET_KEY`** (64 hex chars each) and reuses it on later redeploys. Override by setting those variables before running the script, or delete the file to rotate secrets.
+- **`WORKER TIMEOUT` / SIGKILL / OOM** on **`t3.micro`**: upgrade **`instance_type`** (e.g. **`t3.small`** or **`t3.medium`**) in Terraform and `terraform apply`.
 - Set strong secrets via `-e` on `docker run` in the deploy script (`FLASK_SECRET_KEY`, `JWT_SECRET_KEY`, OAuth/email vars) — avoid committing real values.
 - For HTTPS, put **Application Load Balancer + ACM** or **CloudFront** in front; update the app URL accordingly.
 

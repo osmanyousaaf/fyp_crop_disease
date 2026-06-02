@@ -104,10 +104,11 @@ export default function PlantScannerScreen() {
     if (!sector) throw new Error('No crop sector selected');
     const api = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
     if (!api) throw new Error('EXPO_PUBLIC_API_URL is not set');
-    const res = await axios.post(`${api}/api/predict`, {
-      image: normalizeDataUri(base64Data),
-      sector,
-    });
+    const res = await axios.post(
+      `${api}/api/predict`,
+      { image: normalizeDataUri(base64Data), sector },
+      { timeout: 120000 },
+    );
     return res.data;
   };
 
