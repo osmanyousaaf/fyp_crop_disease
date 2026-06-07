@@ -83,12 +83,33 @@ def load_agricore_keras_bundle(artifact_dir: str) -> dict[str, Any]:
     return out
 
 
-def predict_keras_probs(model: Any, raw_bytes: bytes, image_size: int) -> np.ndarray:
+def _model_has_baked_preprocess(model: Any) -> bool:
+    """Saved AgriCore .keras files include augmentation/preprocess in a `sequential` sub-model."""
+    names = {getattr(layer, "name", "") for layer in model.layers}
+    return "sequential" in names
+
+
+def predict_keras_probs(
+    model: Any,
+    raw_bytes: bytes,
+    image_size: int,
+    num_classes: int | None = None,
+) -> np.ndarray:
     import tensorflow as tf  # noqa: PLC0415
 
     img = Image.open(BytesIO(raw_bytes)).convert("RGB").resize((image_size, image_size), Image.LANCZOS)
     arr = np.asarray(img, dtype=np.float32)
     batch = np.expand_dims(arr, axis=0)
-    x = tf.keras.applications.mobilenet_v2.preprocess_input(batch)
-    preds = model.predict(x, verbose=0)
-    return np.asarray(preds, dtype=np.float64).reshape(-1)
+    # Full saved graphs already run mobilenet preprocess inside the model; doing it again
+    # collapses predictions to Corn___Common_Rust for every image.
+    if _model_has_baked_preprocess(model):
+        x = batch
+    else:
+        x = tf.keras.applications.mobilenet_v2.preprocess_input(batch)
+    preds = np.asarray(model.predict(x, verbose=0), dtype=np.float64).reshape(-1)
+    if num_classes is not None and preds.shape[0] > num_classes:
+        preds = preds[:num_classes]
+    total = float(preds.sum())
+    if total > 0:
+        preds = preds / total
+    return preds

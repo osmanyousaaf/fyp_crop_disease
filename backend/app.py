@@ -532,7 +532,12 @@ def predict():
             idx = int(np.argmax(probs))
             conf = float(probs[idx])
         elif keras_model is not None:
-            probs = predict_keras_probs(keras_model, raw_bytes, img_sz)
+            probs = predict_keras_probs(
+                keras_model,
+                raw_bytes,
+                img_sz,
+                num_classes=len(class_labels),
+            )
             idx = int(np.argmax(probs))
             conf = float(probs[idx])
         elif session:
